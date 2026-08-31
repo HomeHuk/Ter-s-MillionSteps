@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient'; 
-// นำเข้าไอคอนสายการเงินและนักธุรกิจระดับพรีเมียม
 import { 
   TrendingUp, 
   Wallet, 
@@ -14,17 +13,20 @@ import {
   Percent, 
   Coins,
   Gem,
-  Award
+  Award,
+  PlusCircle,
+  ArrowDownLeft
 } from 'lucide-react';
 
 export default function App() {
-  const [currentBalance, setCurrentBalance] = useState(1000); 
+  // ตั้งค่าเริ่มต้นให้เป็น 0 เมื่อยังไม่มีข้อมูลในระบบ
+  const [currentBalance, setCurrentBalance] = useState(0); 
+  const [totalInvested, setTotalInvested] = useState(0); 
   const [inputProfit, setInputProfit] = useState(''); 
-  const [isGain, setIsGain] = useState(true); 
+  const [actionType, setActionType] = useState('deposit'); // ตั้งค่า Default หน้าฟอร์มให้เริ่มที่ "เติมเงิน"
   const [history, setHistory] = useState([]); 
   const [isLoading, setIsLoading] = useState(true); 
 
-  // ปรับการ์ดเป้าหมายให้มีไอคอนระบุความสำเร็จระดับนักธุรกิจชั้นนำ
   const TARGETS = [
     { label: '🔥 1 ล้านบาทแรก (First Goal)', value: 1000000, color: 'from-cyan-500/10 via-emerald-500/20 to-slate-900', borderColor: 'border-emerald-500/30', icon: <Coins className="w-6 h-6 text-emerald-400" /> },
     { label: '👑 5 ล้านบาท (Elite Trader)', value: 5000000, color: 'from-blue-600/10 via-indigo-500/20 to-slate-900', borderColor: 'border-indigo-500/30', icon: <Briefcase className="w-6 h-6 text-indigo-400" /> },
@@ -48,8 +50,12 @@ export default function App() {
       if (data && data.length > 0) {
         setHistory(data);
         setCurrentBalance(Number(data[0].balance_after));
+        setTotalInvested(Number(data[0].total_invested || 0));
       } else {
-        setCurrentBalance(1000);
+        // เมื่อไม่มีข้อมูลใน DB ให้เซ็ตเป็น 0
+        setHistory([]);
+        setCurrentBalance(0);
+        setTotalInvested(0);
       }
     } catch (error) {
       console.error('Error fetching data:', error.message);
@@ -66,8 +72,8 @@ export default function App() {
     return Math.ceil(days);
   };
 
-  const todayTargetProfit = currentBalance * 0.20;
-  const todayRequiredTotal = currentBalance * 1.20;
+  const todayTargetProfit = currentBalance > 0 ? currentBalance * 0.20 : 0;
+  const todayRequiredTotal = currentBalance + todayTargetProfit;
 
   const handleUpdateBalance = async (e) => {
     e.preventDefault();
@@ -75,31 +81,52 @@ export default function App() {
     if (isNaN(amount) || amount <= 0) return;
 
     let newBalance = currentBalance;
+    let newTotalInvested = totalInvested;
     let withdrawable = 0;
+    let recordType = 'กำไร';
 
-    if (isGain) {
-      const expectedTotal = currentBalance + todayTargetProfit;
-      const actualTotal = currentBalance + amount;
-
-      if (actualTotal > expectedTotal) {
-        withdrawable = actualTotal - expectedTotal; 
-        newBalance = expectedTotal; 
-      } else {
-        newBalance = actualTotal;
+    if (actionType === 'withdraw') {
+      if (amount > currentBalance) {
+        alert('ยอดเงินในพอร์ตปัจจุบันมีไม่พอให้ถอนครับ!');
+        return;
       }
-    } else {
-      newBalance = Math.max(0, currentBalance - amount); 
+      recordType = 'ถอนเงิน';
+      newBalance = currentBalance - amount;
+      newTotalInvested = Math.max(0, totalInvested - amount);
+    } else if (actionType === 'deposit') {
+      recordType = 'เติมเงินทุน';
+      newTotalInvested = totalInvested + amount;
+      newBalance = currentBalance + amount;
+    } else if (actionType === 'gain') {
+      recordType = 'กำไร';
+      if (currentBalance > 0) {
+        const expectedTotal = currentBalance + todayTargetProfit;
+        const actualTotal = currentBalance + amount;
+
+        if (actualTotal > expectedTotal) {
+          withdrawable = actualTotal - expectedTotal; 
+          newBalance = expectedTotal; 
+        } else {
+          newBalance = actualTotal;
+        }
+      } else {
+        newBalance = currentBalance + amount;
+      }
+    } else if (actionType === 'loss') {
+      recordType = 'ขาดทุน';
+      newBalance = currentBalance - amount; 
     }
 
     try {
       const { error } = await supabase
         .from('daily_records')
         .insert([{
-          type: isGain ? 'กำไร' : 'ขาดทุน',
+          type: recordType,
           amount: amount,
           balance_before: currentBalance,
           balance_after: newBalance,
-          withdrawable: withdrawable
+          withdrawable: withdrawable,
+          total_invested: newTotalInvested
         }]);
 
       if (error) throw error;
@@ -134,13 +161,25 @@ export default function App() {
             </div>
           </div>
           
-          <div className="w-full sm:w-auto bg-slate-950/60 px-4 py-3 rounded-xl border border-slate-800/80 flex justify-between sm:block items-center">
-            <span className="text-[11px] text-slate-400 font-medium tracking-wider uppercase block sm:mb-0.5">พอร์ตปัจจุบัน</span>
-            <div className="flex items-center gap-2">
-              <Wallet className="w-4 h-4 text-emerald-400 hidden sm:inline" />
-              <span className="text-2xl font-black text-emerald-400 font-mono">
-                ฿{currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </span>
+          <div className="w-full sm:w-auto flex items-center gap-3">
+            <div className="flex-1 sm:flex-none bg-slate-950/60 px-4 py-2.5 rounded-xl border border-slate-800/80">
+              <span className="text-[10px] text-slate-400 font-medium tracking-wider uppercase block">รวมเงินลงทุนทั้งหมด</span>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <Coins className="w-4 h-4 text-cyan-400" />
+                <span className="text-lg font-black font-mono text-cyan-400">
+                  ฿{totalInvested.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex-1 sm:flex-none bg-slate-950/60 px-4 py-2.5 rounded-xl border border-slate-800/80">
+              <span className="text-[10px] text-slate-400 font-medium tracking-wider uppercase block">พอร์ตปัจจุบัน</span>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <Wallet className="w-4 h-4 text-emerald-400" />
+                <span className={`text-lg font-black font-mono ${currentBalance >= 0 ? 'text-emerald-400' : 'text-rose-500'}`}>
+                  ฿{currentBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+              </div>
             </div>
           </div>
         </header>
@@ -152,11 +191,10 @@ export default function App() {
           </div>
         ) : (
           <>
-            {/* --- โซนการ์ดเป้าหมายเชิงลึก (3 Columns) --- */}
             <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {TARGETS.map((target, idx) => {
                 const daysLeft = calculateDaysRemaining(currentBalance, target.value);
-                const progress = Math.min(100, (currentBalance / target.value) * 100);
+                const progress = Math.max(0, Math.min(100, (currentBalance / target.value) * 100));
 
                 return (
                   <div key={idx} className={`bg-gradient-to-b ${target.color} p-5 rounded-2xl border ${target.borderColor} shadow-xl relative overflow-hidden transition-all duration-300 hover:scale-[1.01]`}>
@@ -180,7 +218,7 @@ export default function App() {
                           </span>
                         )
                       ) : (
-                        <span className="text-3xl font-black font-mono text-rose-400">🚨 พอร์ตติดลบ</span>
+                        <span className="text-2xl font-black font-mono text-rose-400">🚨 พอร์ตติดลบ</span>
                       )}
                     </div>
                     
@@ -197,10 +235,7 @@ export default function App() {
               })}
             </section>
 
-            {/* --- โซนทำงานหลักแบ่งเลย์เอาต์ตามจอมือถือและคอมพิวเตอร์ --- */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-              
-              {/* ฝั่งซอร์มบันทึกข้อมูล (4 ส่วนในจอใหญ่, เต็มจอในมือถือ) */}
               <main className="lg:col-span-5 bg-slate-900/90 border border-slate-800 p-5 sm:p-6 rounded-2xl shadow-xl space-y-4">
                 <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
                   <Target className="w-5 h-5 text-cyan-400" />
@@ -219,25 +254,45 @@ export default function App() {
                 </div>
 
                 <form onSubmit={handleUpdateBalance} className="space-y-4">
-                  <div className="grid grid-cols-2 gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                  <div className="grid grid-cols-4 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
                     <button
                       type="button"
-                      onClick={() => setIsGain(true)}
-                      className={`py-2.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1 ${isGain ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/10' : 'text-slate-400 hover:text-slate-200'}`}
+                      onClick={() => setActionType('gain')}
+                      className={`py-2 rounded-lg text-[11px] font-black transition-all flex items-center justify-center gap-0.5 ${actionType === 'gain' ? 'bg-emerald-500 text-slate-950 shadow-md shadow-emerald-500/10' : 'text-slate-400 hover:text-slate-200'}`}
                     >
-                      <ArrowUpRight className="w-4 h-4 stroke-[3]" /> ปิดบวกกำไร
+                      <ArrowUpRight className="w-3.5 h-3.5 stroke-[3]" /> ปิดบวก
                     </button>
                     <button
                       type="button"
-                      onClick={() => setIsGain(false)}
-                      className={`py-2.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-1 ${!isGain ? 'bg-rose-500 text-white shadow-md shadow-rose-500/10' : 'text-slate-400 hover:text-slate-200'}`}
+                      onClick={() => setActionType('loss')}
+                      className={`py-2 rounded-lg text-[11px] font-black transition-all flex items-center justify-center gap-0.5 ${actionType === 'loss' ? 'bg-rose-500 text-white shadow-md shadow-rose-500/10' : 'text-slate-400 hover:text-slate-200'}`}
                     >
-                      <ArrowDownRight className="w-4 h-4 stroke-[3]" /> ปิดลบขาดทุน
+                      <ArrowDownRight className="w-3.5 h-3.5 stroke-[3]" /> ปิดลบ
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActionType('deposit')}
+                      className={`py-2 rounded-lg text-[11px] font-black transition-all flex items-center justify-center gap-0.5 ${actionType === 'deposit' ? 'bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/10' : 'text-slate-400 hover:text-slate-200'}`}
+                    >
+                      <PlusCircle className="w-3.5 h-3.5 stroke-[3]" /> เติมเงิน
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActionType('withdraw')}
+                      className={`py-2 rounded-lg text-[11px] font-black transition-all flex items-center justify-center gap-0.5 ${actionType === 'withdraw' ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/10' : 'text-slate-400 hover:text-slate-200'}`}
+                    >
+                      <ArrowDownLeft className="w-3.5 h-3.5 stroke-[3]" /> ถอนเงิน
                     </button>
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider block">ระบุจำนวนเงินจริง (บาท)</label>
+                    <label className="text-[11px] text-slate-400 font-semibold uppercase tracking-wider block">
+                      {actionType === 'withdraw' 
+                        ? 'ระบุจำนวนเงินที่ต้องการถอนออก (บาท)' 
+                        : actionType === 'deposit' 
+                        ? 'ระบุจำนวนเงินที่ต้องการเติมเพิ่ม (บาท)' 
+                        : 'ระบุจำนวนเงินจริง (บาท)'}
+                    </label>
                     <div className="relative">
                       <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500 font-mono text-sm">฿</div>
                       <input
@@ -245,7 +300,15 @@ export default function App() {
                         step="any"
                         value={inputProfit}
                         onChange={(e) => setInputProfit(e.target.value)}
-                        placeholder={isGain ? "วันนี้ทำกำไรได้กี่บาท" : "วันนี้เทรดเสียไปกี่บาท"}
+                        placeholder={
+                          actionType === 'withdraw' 
+                            ? "ใส่จำนวนเงินที่ต้องการถอน" 
+                            : actionType === 'deposit' 
+                            ? "ใส่จำนวนเงินลงทุนที่ต้องการเติม" 
+                            : actionType === 'gain' 
+                            ? "วันนี้ทำกำไรได้กี่บาท" 
+                            : "วันนี้เทรดเสียไปกี่บาท"
+                        }
                         className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-8 pr-4 py-3 text-white font-mono text-sm focus:outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 transition-all"
                         required
                       />
@@ -254,14 +317,22 @@ export default function App() {
 
                   <button
                     type="submit"
-                    className={`w-full py-3.5 rounded-xl font-black text-sm tracking-wide text-white transition-all shadow-lg flex items-center justify-center gap-2 ${isGain ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-950' : 'bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 shadow-rose-950'}`}
+                    className={`w-full py-3.5 rounded-xl font-black text-sm tracking-wide text-white transition-all shadow-lg flex items-center justify-center gap-2 ${
+                      actionType === 'withdraw'
+                        ? 'bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 shadow-amber-950'
+                        : actionType === 'deposit' 
+                        ? 'bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 shadow-cyan-950' 
+                        : actionType === 'gain'
+                        ? 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 shadow-emerald-950'
+                        : 'bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 shadow-rose-950'
+                    }`}
                   >
-                    <TrendingUp className="w-4 h-4" /> บันทึกยอดเข้าคลาวด์เซิร์ฟเวอร์
+                    <TrendingUp className="w-4 h-4" /> 
+                    {actionType === 'withdraw' ? 'บันทึกรายการถอนเงิน' : actionType === 'deposit' ? 'บันทึกยอดเติมเงินทุน' : 'บันทึกยอดเข้าคลาวด์เซิร์ฟเวอร์'}
                   </button>
                 </form>
               </main>
 
-              {/* ฝั่งตารางสถิติและประวัติ (7 ส่วนในจอใหญ่, เลื่อนสไลด์ด้านข้างได้ในมือถือจอเล็กเพื่อไม่ให้ตารางพัง) */}
               <section className="lg:col-span-7 bg-slate-900/90 border border-slate-800 p-5 sm:p-6 rounded-2xl shadow-xl flex flex-col justify-between">
                 <div>
                   <div className="flex items-center gap-2 border-b border-slate-800 pb-3 mb-4">
@@ -275,12 +346,11 @@ export default function App() {
                         <Coins className="w-5 h-5" />
                       </div>
                       <div>
-                        <strong>ระบบแจ้งเตือนเงินรางวัล:</strong> พอร์ตโตเกินเป้าหมายทบต้น มีเงินส่วนเกินที่ถอนออกไปใช้รางวัลชีวิตได้ <span className="text-white font-black font-mono">฿{Number(history[0].withdrawable).toLocaleString(undefined, {maximumFractionDigits:2})}</span> โดยไม่กระทบโครงสร้างทุนหลักครับคุณเตอร์!
+                        <strong>ระบบแจ้งเตือนเงินรางวัล:</strong> พอร์ตโตเกินเป้าหมายทบต้น มีเงินส่วนเกินที่ถอนออกไปใช้รางวัลชีวิตได้ <span className="text-white font-black font-mono">฿{Number(history[0].withdrawable).toLocaleString(undefined, {maximumFractionDigits:2})}</span> โดยไม่กระทบโครงสร้างทุนหลัก!
                       </div>
                     </div>
                   )}
 
-                  {/* รองรับ Responsive Table บนจอมือถือไม่ให้หลุดขอบ */}
                   <div className="overflow-x-auto -mx-5 sm:mx-0">
                     <div className="inline-block min-w-full align-middle px-5 sm:px-0">
                       <table className="w-full text-left text-xs sm:text-sm">
@@ -297,20 +367,32 @@ export default function App() {
                             <tr key={item.id} className="hover:bg-slate-800/20 transition-colors">
                               <td className="py-3 text-slate-400 text-xs">{new Date(item.created_at).toLocaleDateString('th-TH', {day: '2-digit', month: 'short'})}</td>
                               <td className="py-3">
-                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black ${item.type === 'กำไร' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'}`}>
-                                  {item.type === 'กำไร' ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
+                                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black ${
+                                  item.type === 'ถอนเงิน'
+                                    ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                    : item.type === 'เติมเงินทุน'
+                                    ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20'
+                                    : item.type === 'กำไร'
+                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                                    : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                                }`}>
+                                  {item.type === 'ถอนเงิน' ? <ArrowDownLeft className="w-3 h-3" /> : item.type === 'เติมเงินทุน' ? <PlusCircle className="w-3 h-3" /> : item.type === 'กำไร' ? <ArrowUpRight className="w-3 h-3" /> : <ArrowDownRight className="w-3 h-3" />}
                                   {item.type}
                                 </span>
                               </td>
-                              <td className={`py-3 text-right font-bold ${item.type === 'กำไร' ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                {item.type === 'กำไร' ? '+' : '-'}฿{Number(item.amount).toLocaleString(undefined, {minimumFractionDigits: 2})}
+                              <td className={`py-3 text-right font-bold ${
+                                item.type === 'ถอนเงิน' ? 'text-amber-400' : item.type === 'เติมเงินทุน' ? 'text-cyan-400' : item.type === 'กำไร' ? 'text-emerald-400' : 'text-rose-400'
+                              }`}>
+                                {item.type === 'กำไร' || item.type === 'เติมเงินทุน' ? '+' : '-'}฿{Number(item.amount).toLocaleString(undefined, {minimumFractionDigits: 2})}
                               </td>
-                              <td className="py-3 text-right text-cyan-400 font-bold">฿{Number(item.balance_after).toLocaleString(undefined, {maximumFractionDigits:2})}</td>
+                              <td className={`py-3 text-right font-bold ${Number(item.balance_after) >= 0 ? 'text-cyan-400' : 'text-rose-400'}`}>
+                                ฿{Number(item.balance_after).toLocaleString(undefined, {maximumFractionDigits:2})}
+                              </td>
                             </tr>
                           ))}
                           {history.length === 0 && (
                             <tr>
-                              <td colSpan="4" className="text-center py-12 text-slate-500 text-xs">ยินดีต้อนรับสู่ระบบเศรษฐีทบต้น เริ่มต้นบันทึกยอดเงินวันแรกได้เลยครับคุณเตอร์!</td>
+                              <td colSpan="4" className="text-center py-12 text-slate-500 text-xs">เริ่มต้นบันทึกรายการโดยเลือก "เติมเงิน" เป็นครั้งแรกได้เลยครับ!</td>
                             </tr>
                           )}
                         </tbody>
